@@ -101,10 +101,13 @@ class MultiAccountBot:
             await self.log("Creating admin space...")
             # Create spaces
             await self._initialize_spaces()
+        if environ.get("CONTROLLER"):
+            # Invite controller to admin space
+            await self.client.room_invite(
+                self.config.get("ADMIN_SPACE"), environ["CONTROLLER"]
+            )
 
-        await self.log(
-            "Initialization complete", room_id=self.config.get("CONTROL_ROOM")
-        )
+        await self.log("Initialization complete")
 
         # Callback for messages
         self.client.add_event_callback(self.message_callback, nio.RoomMessageText)
