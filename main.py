@@ -94,6 +94,7 @@ class MultiAccountBot:
             self.config: dict = json.load(open("config.json", "r", encoding="utf-8"))
         except FileNotFoundError:
             self.config = {}
+        self.begin_process: bool = False
 
     async def start(self):
         print((await self.client.login(environ["PASSWORD"])).device_id)
@@ -107,22 +108,75 @@ class MultiAccountBot:
                 self.config.get("ADMIN_SPACE"), environ["CONTROLLER"]
             )
 
-        await self.log("Initialization complete")
-
         # Callback for messages
         self.client.add_event_callback(self.message_callback, nio.RoomMessageText)
         await self.client.sync_forever(timeout=30000)
 
     async def message_callback(self, room: nio.MatrixRoom, event: nio.RoomMessageText):
-        if room.room_id == self.config.get("CONTROL_ROOM"):
+        if room.room_id == self.config.get("CONTROL_ROOM") and event.body.startswith(
+            "!"
+        ):
+            if event.body == "!begin":
+                self.begin_process = True
+                await self.log("Initialization complete", room_id=room.room_id)
+                return
+            if not self.begin_process:
+                return
             # switch case
             match event.body:
                 case "!exit":
                     await self.log("Exiting...", room_id=room.room_id)
+                    await self.log("--- END OF BOT LOG ---")
                     await self.client.close()
                     # Write config
                     json.dump(self.config, open("config.json", "w", encoding="utf-8"))
                     raise SystemExit(0)
+                # If starts with !crawl
+                case body if body.startswith("!crawl"):
+                    # Get room ID
+                    if len(body.split(" ")) >= 2:
+                        room_id = body.split(" ")[1]
+                        # Check if room exists
+                        joined_rooms: nio.JoinedRoomsResponse = (
+                            await self.client.joined_rooms()
+                        )
+                        if room_id not in joined_rooms.rooms:
+                            await self.log("Room not found", room_id=room.room_id)
+                            return
+                        if len(body.split(" ")) == 3:
+                            # Get limit
+                            try:
+                                limit = int(body.split(" ")[2])
+                            except ValueError:
+                                await self.log("Invalid limit", room_id=room.room_id)
+                                return
+                        else:
+                            limit = 10
+                        # Get messages
+                        messages: nio.RoomMessagesResponse = (
+                            await self.client.room_messages(room_id, limit=limit)
+                        )
+                        # Send messages
+                        for event in messages.chunk:
+                            if isinstance(event, nio.RoomMessageText):
+                                await self.log(
+                                    f"{event.sender} | {event.body}",
+                                    room_id=room.room_id,
+                                )
+                            else:
+                                await self.log(
+                                    f"{event.sender} | {event.type}",
+                                    room_id=room.room_id,
+                                )
+                                await self.client.room_send(
+                                    room.room_id,
+                                    message_type=event.type,
+                                    content=event.content,
+                                )
+                    return
+                case _:
+                    await self.log("Unknown command", room_id=room.room_id)
+                    return
 
 
 if __name__ == "__main__":
