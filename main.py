@@ -1,4 +1,4 @@
-import asyncio, json
+import asyncio, json, time
 
 import nio
 
@@ -10,6 +10,8 @@ environ = dotenv_values(".env")
 
 class MultiAccountBot:
     async def log(self, message: str, room_id: str = None) -> None:
+        # GMT +8 time in YYYY-MM-DD HH:MM:SS format
+        message = f"[{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime())}] {message}"
         print(message)
         resp = await self.client.room_send(
             room_id=room_id or environ["LOG_ROOM"],
@@ -69,10 +71,29 @@ class MultiAccountBot:
         self.config["CONTROL_ROOM"] = room.room_id
         await self.log(f"Created control room with ID {room.room_id}")
 
+        # Move log room to space and rename it to "Log Room"
+        await self.client.room_put_state(
+            space_id,
+            "m.space.child",
+            {
+                "suggested": True,
+                "via": [via_domain],
+            },
+            state_key=environ["LOG_ROOM"],
+        )
+        await self.client.room_put_state(
+            environ["LOG_ROOM"],
+            "m.room.name",
+            {"name": "Log Room"},
+        )
+
     def __init__(self) -> None:
         self._check_config()
         self.client = nio.AsyncClient(environ["SERVER_URL"], environ["USER_ID"])
-        self.config: dict = json.load(open("config.json", "r", encoding="utf-8"))
+        try:
+            self.config: dict = json.load(open("config.json", "r", encoding="utf-8"))
+        except FileNotFoundError:
+            self.config = {}
 
     async def start(self):
         print((await self.client.login(environ["PASSWORD"])).device_id)
@@ -94,7 +115,7 @@ class MultiAccountBot:
             # switch case
             match event.body:
                 case "!exit":
-                    await self.log("Exiting...")
+                    await self.log("Exiting...", room_id=room.room_id)
                     await self.client.close()
                     # Write config
                     json.dump(self.config, open("config.json", "w", encoding="utf-8"))
